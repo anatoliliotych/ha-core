@@ -461,6 +461,38 @@ class SmartThingsAirConditioner(SmartThingsEntity, ClimateEntity):
         )
         await asyncio.gather(*tasks)
 
+        # Only once the device is on and the setpoint is applied: the vendor
+        # options below are ignored by a unit that is still powering up, and
+        # pointless for one that was just switched off.
+        if kwargs.get(ATTR_HVAC_MODE) != HVACMode.OFF:
+            await self._apply_samsung_options()
+
+    async def _apply_samsung_options(self) -> None:
+        """Keep the panel light off and the buzzer muted on Samsung ACs.
+
+        Both options live in the same "x.com.samsung.da.options" array on the
+        same "mode/vs/0" resource, and writing that array replaces it wholesale.
+        Sending them as two commands means the device applies whichever arrives
+        last and silently drops the other, so they must go in a single write.
+        """
+        arguments = [
+            "mode/vs/0",
+            {"x.com.samsung.da.options": ["Light_On", "Volume_Mute"]},
+        ]
+
+        _LOGGER.debug("Sending Samsung AC options command: %s", arguments)
+
+        try:
+            await self.execute_device_command(
+                Capability.EXECUTE,
+                Command.EXECUTE,
+                argument=arguments,
+            )
+        except Exception as err:  # noqa: BLE001
+            # Best effort: a vendor-specific extra must never fail the
+            # temperature or mode change the user actually asked for.
+            _LOGGER.warning("Failed to apply Samsung AC options: %s", err)
+
     async def async_turn_on(self) -> None:
         """Turn device on."""
         await self.execute_device_command(
